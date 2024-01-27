@@ -1,0 +1,1334 @@
+---
+title: "Stroke Prediction Project"
+author: Pravalika Javvadi
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+
+# Business Understanding
+```{r}
+#For my machine learning project, I have chosen the Stroke Prediction Dataset. This dataset contains information on over 5,000 patients and includes features such as age, hypertension, smoking status, and whether or not the patient had a stroke. The dataset can be found on Kaggle at the following URL: https://www.kaggle.com/fedesoriano/stroke-prediction-dataset.
+
+#Business Understanding for Stroke Prediction Dataset:
+
+#The healthcare dataset on stroke prediction contains information about patients' demographic, lifestyle, and health-related characteristics, as well as whether or not they have had a stroke. The goal of this project is to build a model that can predict the likelihood of a patient having a stroke based on their characteristics.
+
+#The stakeholders for this project include healthcare providers and insurers, as well as policy makers and public health officials. By identifying patients at high risk for stroke, healthcare providers can target preventive interventions to those who need them most, potentially reducing the incidence and severity of strokes. Insurers can also use this model to more accurately price policies and manage risk. Finally, policy makers and public health officials can use the insights gained from this analysis to develop targeted public health campaigns to educate the public about stroke risk factors and promote healthy behaviors.
+
+#To achieve these goals, we will need to perform exploratory data analysis to understand the distribution of the variables and identify any missing data or outliers. We will also need to evaluate the predictive power of each variable and identify any potential confounding factors that could influence the results. Finally, we will build and test several machine learning models to determine which one performs best on this dataset.
+```
+
+
+
+
+Installations needed:
+```{r}
+#remotes::install_version("DMwR", version="0.4.1") 
+## The package DMwR is not available for my current R version so I downloaded it like this. Just sharing it here just in case if it doesn't work on the other's R studio as well.
+```
+
+
+Libraries:
+```{r}
+library(dplyr)
+library(readr)
+library(fastDummies)
+library(psych)
+library(plotly)
+library(ggmosaic)
+library(reshape2)
+library(caret)
+library(randomForest)
+library(nnet)
+library(DMwR)
+library(devtools)
+library(RColorBrewer)
+library(C50)
+library(ipred)
+```
+
+
+## Data Understanding
+```{r}
+## Data Collection and exploration
+
+## The URL of the stroke prediction dataset
+# "https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset?select=healthcare-dataset-stroke-data.csv" 
+
+
+url <- "https://drive.google.com/uc?id=1F_TDiOvhghFSWda-bpHO3ml5PwfpWP1Q&export=download"
+
+#Read the CSV file
+stroke <- read.csv(url, header = T)
+
+
+# check the structure of the dataset
+str(stroke)
+paste0("We have a 5110 observations and 12 variables which a couple of numerical, char and int variables. Some necessary conversions should be made for the variables.")
+
+# Check the statistics of the dataset
+summary(stroke)
+paste0("We have found that the age & avg_glucose_level features have some un-usual statistics like in the age column the data is positively skewed, as the mean is smaller than the median. Additionally, there are no missing values in the age column, and the range of values is between 0.08 and 82, which indicates that there is a wide variation in age. Also, the average glucose level variable appears to have a right-skewed distribution, with a median of 91.89 and a mean of 106.15. Additionally, there appears to be some potential outliers as the maximum value is significantly higher than the third quartile.")
+
+summary(stroke$age) #check the summary of age
+paste0("The summary seemed off since the min value is 0.08 which is ridiculous to be a person's age.")
+stroke$age <- ceiling(stroke$age) # round up the values to the nearest integer
+
+# now re-check the summary of the age to check if the conversion happened
+summary(stroke$age)
+```
+
+
+# Data cleaning, preparation and shaping
+```{r}
+# Data preparation
+
+stroke <- subset(stroke, select = -c(id)) # the id column doesn't serve any valuable purpose in this data set so I removed it.
+
+# Convert bmi to numeric
+stroke$bmi <- as.numeric(stroke$bmi) # Also, I observed that the BMI column is in char so I converted it to numeric
+summary(stroke$bmi) # We have checked the summary to see the statistics of the BMI after its conversion and found that there are presence of some missing values
+
+# Check for missing values
+colSums(is.na(stroke)) # to display the number of missing values found in the BMI column
+
+# Check the distribution of the BMI column to select the best method to impute it
+hist(stroke$bmi)
+paste0("According to the distribution, it is positively skewed and it would be better to impute the missing values with the median rather than the mean. This is because the median is less sensitive to outliers and extreme values than the mean, and therefore more appropriate for skewed distributions.")
+
+
+# impute the missing values in BMI
+median <- median(stroke$bmi, na.rm = TRUE)
+stroke$bmi[is.na(stroke$bmi)] <- median
+head(stroke$bmi, 20)
+
+## Now, lets examine the categorical variables
+
+#First, lets start with the gender column
+table(stroke$gender)
+paste0("Here, we can see there is only a single observation for the 'other' so I decided to exclude the single observation as it doesnt make any huge impact in the gender column.")
+
+# Filter the data frame to exclude rows where "gender" is equal to other
+stroke<- stroke %>%
+  filter(gender != "Other")
+
+# check if the conversion happened
+table(stroke$gender)
+
+# Now,lets examine the remaining discrete columns
+table(stroke$hypertension)
+table(stroke$heart_disease)
+table(stroke$ever_married)
+table(stroke$Residence_type)
+table(stroke$smoking_status)
+table(stroke$work_type)
+table(stroke$stroke)
+
+# Convert the Unknown to never smoked because there are huge number of unknowns which technically means we don't know the information so rather i decided to change it to the most frequent category i.e., never smoked.
+stroke$smoking_status <- replace(stroke$smoking_status, stroke$smoking_status == "Unknown", "never smoked")
+
+# check if the conversion happened
+table(stroke$smoking_status)
+
+# Conversion of data types
+
+# Convert the characters into factor columns
+stroke$hypertension <- as.factor(stroke$hypertension)
+stroke$heart_disease <- as.factor(stroke$heart_disease)
+stroke$Residence_type <- as.factor(stroke$Residence_type)
+stroke$ever_married <- as.factor(stroke$ever_married)
+stroke$stroke <- as.factor(stroke$stroke)
+
+# Check the structure of the dataset to see if the conversion happened
+str(stroke)
+
+```
+
+
+# Identification of PCA 
+```{r}
+# Perform PCA
+pca <- prcomp(stroke[, c("age", "avg_glucose_level", "bmi")], scale = TRUE)
+
+# Plot proportion of variance explained by each principal component
+plot(pca)
+
+# Check the loadings of the first principal component
+loadings <- pca$rotation
+
+## Check all loadings
+loadings[,1]
+loadings[,2]
+loadings[,3]
+
+# Display the first pca values
+first_pca_loadings <- loadings[,1]
+
+# Check which features are strongly associated with the first principal component
+sorted_loadings <- sort(abs(first_pca_loadings), decreasing = TRUE)
+print(sorted_loadings)
+```
+This is the PCA distribution of the continuous variables. There are no features necessary to be removed and I believe for this dataset, since there are only 3 continuous features and 11 categorical features, the performance of PCA wouldn't be necessary given  that the dimensionality of the dataset is relatively low. However, I want to try and see the distribution so I performed PCA but in other case I don't think PCA is necessary here. 
+
+
+
+
+# Data exploratory analysis
+```{r}
+# Data exploratory analysis
+
+# Discrete variables distribution
+#Gender
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = gender, fill = gender)) +
+  labs(title = "Distribution of Gender", x = "Gender", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("#99CCFF", "#FF6666"))
+  
+ggplotly()
+
+#Hypertension
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = hypertension, fill = hypertension)) +
+  labs(title = "Distribution of Hypertension", x = "Hypertension", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("darkgreen", "lightgreen"))
+  
+ggplotly()
+
+#Heart disease
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = heart_disease, fill = heart_disease)) +
+  labs(title = "Distribution of Heart disease", x = "Heart disease", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("darkred", "red"))
+  
+ggplotly()
+
+
+# Ever married
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = ever_married, fill = ever_married)) +
+  labs(title = "Distribution of Ever Married", x = "Ever married", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("Orange", "lightblue"))
+  
+ggplotly()
+
+# Work type
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = work_type, fill = work_type)) +
+  labs(title = "Distribution of Work Type", x = "Work Type", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("Orange", "red", "blue", "darkgreen", "black"))
+  
+ggplotly()
+
+# Residence type
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = Residence_type, fill = Residence_type)) +
+  labs(title = "Distribution of Residence type", x = "Residence type", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("Orange", "black"))
+  
+ggplotly()
+
+# smoking status
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = smoking_status, fill = smoking_status)) +
+  labs(title = "Distribution of Smoking status", x = "Smoking Status", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("Orange", "red", "black"))
+  
+ggplotly()
+
+
+#stroke
+ggplot(data = stroke) +
+  geom_bar(mapping = aes(x = stroke, fill = stroke)) +
+  labs(title = "Distribution of Stroke", x = "Stroke", y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("darkblue", "lightblue"))
+  
+ggplotly()
+```
+From the above distributions, these are what I observed:
+1. The percentage of individuals not having a heart disease and a hypertension is majority.
+2. According to the data, there are more number of females than males and the percentage of individuals being married is the majority.
+3. Also, the percentage of not having a stroke is the majority as per the data.
+4. The private workers category and never smoked category are the majority in work type and smoking status.
+
+
+```{r, warning=FALSE}
+# Continuous variables
+
+#Age
+plot_ly(stroke, x = ~age, color = ~age)%>%
+  add_histogram()
+
+# To visualize the Age feature distribution in a better way, we can bin the age column and then display it
+age <- stroke$age
+age.bins <- cut(age, c(1, 11, 21, 31, 41, 51, 61,  71, 81, Inf), c("1-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71-80",  ">81"), include.lowest=TRUE, ordered_result = TRUE)
+age_table <- table(age.bins)
+age.plot <- barplot(table(age.bins), main = "Age feature distribution after binning", col = brewer.pal(5, "Set2"), xlab = "Age Groups", ylab = "Count", names.arg = levels(age.bins), las = 2, cex.names = 0.8)
+text(x = age.plot, y = age_table + 3, labels = as.character(age_table), pos = 1)
+
+
+#Average glucose level
+plot_ly(stroke, x = ~avg_glucose_level, color = ~avg_glucose_level)%>%
+  add_histogram()
+
+#BMI
+plot_ly(stroke, x = ~bmi, color = ~bmi)%>%
+  add_histogram()
+```
+From the above distributions, these are what I observed:
+1. The age distribution is slightly negative-skewed
+2. The average glucose level and BMI distributions are slightly positive-skewed.
+3. The pike in the BMI is due to replacement of missing values with mean value of the column.
+4. From the binned age barplot, we can see that the highest number of people are in the age group of 51-60.
+
+```{r, warning=FALSE}
+# Now, we check the relationship between stroke (the outcome variable) with different input variables
+
+# Using boxplots is best for checking the relationship between the continuous variables and categorical variables.
+
+# Age & Stroke
+plot_ly(stroke, x = ~stroke, y = ~age, type = "box", color = ~stroke) %>%
+  layout(xaxis = list(title = "Stroke"), yaxis = list(title = "Age")) %>%
+  layout(title = "Relationship between Age and Stroke")
+
+# Average glucose level & Stroke
+plot_ly(stroke, x = ~stroke, y = ~avg_glucose_level, type = "box", color = ~stroke) %>%
+  layout(xaxis = list(title = "Stroke"), yaxis = list(title = "Average glucose level")) %>%
+  layout(title = "Relationship between Average glucose level and Stroke")
+
+
+# BMI & Stroke
+plot_ly(stroke, x = ~stroke, y = ~bmi, type = "box", color = ~stroke) %>%
+  layout(xaxis = list(title = "Stroke"), yaxis = list(title = "BMI")) %>%
+  layout(title = "Relationship between BMI and Stroke")
+```
+From the above distributions, this is what I observed:
+1. The elder individuals are most prone for a stroke prediction.
+2. The individuals with high average glucose level are more inclined for a stroke.
+3. The individuals with high BMI levels are the ones without stroke.
+
+
+```{r, warning=FALSE}
+# Check the relationship between the discrete variables and the stroke variable using mosaic plot
+
+# Work type & Stroke
+ggplot(data = stroke) +geom_mosaic(aes(x = product(stroke,work_type), fill=work_type)) + labs(title='Relationship between Stroke and Work type')
+
+# Smoking status & Stroke
+ggplot(data = stroke) +geom_mosaic(aes(x = product(stroke,smoking_status), fill=smoking_status)) + labs(title='Relationship between Stroke and Smoking status')
+
+# Hypertension & Stroke
+ggplot(data = stroke) +geom_mosaic(aes(x = product(stroke,hypertension), fill=hypertension)) + labs(title='Relationship between Stroke and Hypertension')
+
+# Heart disease & Stroke
+ggplot(data = stroke) +geom_mosaic(aes(x = product(stroke,heart_disease), fill=heart_disease)) + labs(title='Relationship between the Stroke and heart disease')
+
+# Ever married & Stroke
+ggplot(data = stroke) +geom_mosaic(aes(x = product(stroke,ever_married), fill= ever_married)) + labs(title='Relationship between the Stroke and Ever married')
+```
+From the above distributions, this is what I observed:
+1. The individuals whose work type is self employed are most likely to get a stroke.
+2. Individuals with high hypertension or heart disease are most likely to get a stroke. 
+3. Smoking has a little effect on the stroke prediction.
+4. The individuals who are married are most likely to get a stroke. 
+
+
+# Correlation between the dependent and the independent variables
+```{r}
+# Create another copy of the stroke dataset to work on the correlation to check the relationship between the features and the target variable
+stroke_data  <- stroke
+
+# Convert the categorical variables into binary values which are easier to analyse
+#ever married
+stroke_data$ever_married <- ifelse(stroke_data$ever_married == "Yes", 1, 0)
+
+#gender
+stroke_data$gender <- ifelse(stroke$gender == "Female", 1, 0)
+
+# residence type
+stroke_data$Residence_type <- ifelse(stroke_data$Residence_type == "Rural", 1, 0)
+
+#smoking status
+stroke_data$smoking_status[stroke_data$smoking_status == "formerly smoked"] <- 0
+stroke_data$smoking_status[stroke_data$smoking_status == "never smoked"] <- 1
+stroke_data$smoking_status[stroke_data$smoking_status == "smokes"] <- 2
+
+# work type
+stroke_data$work_type[stroke_data$work_type == "Private"] <- 0
+stroke_data$work_type[stroke_data$work_type == "children"] <- 1
+stroke_data$work_type[stroke_data$work_type == "Govt_job"] <- 2
+stroke_data$work_type[stroke_data$work_type == "Never_worked"] <- 3
+stroke_data$work_type[stroke_data$work_type == "Self-employed"] <- 4
+
+# Check if the converted values are ready for the analysis
+str(stroke_data)
+
+# Convert the factor variables into numeric variables
+stroke_data$heart_disease <- as.numeric(stroke_data$heart_disease)
+stroke_data$hypertension <- as.numeric(stroke_data$hypertension)
+stroke_data$stroke <- as.numeric(stroke_data$stroke)
+stroke_data$work_type <- as.numeric(as.character(stroke_data$work_type))
+stroke_data$smoking_status <- as.numeric(as.character(stroke_data$smoking_status))
+
+# Check if the conversion happened successfully or not
+str(stroke_data)
+
+# check the correlation between the quantitative variables
+cor <- round(cor(stroke_data),2)
+corr_melted <- melt(cor)
+
+# A heatmap that shows the correlation between the numerical features and the target feature
+ggplot(corr_melted, aes(x=Var1, y=Var2, fill=value)) + geom_tile() +  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Pearson Correlation") + geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) + theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1))+ labs(title = "Correlation Matrix of Numerical Features")
+```
+These are the couple of observations I had regarding the above output:
+1. Most of the features are not highly correlated with each other. This is desirable in a regression analysis because highly correlated features can cause multicollinearity issues, which can affect the accuracy and interpret ability of the regression model. Therefore, having features with low correlation can be beneficial for building a more reliable and accurate regression model.
+2. After checking for the correlation between different variables in the data set, it was found that the only correlation worth noticing is the one between the age and ever_married variables. However, this correlation is not surprising or interesting because it is expected that older individuals are more likely to be married than younger individuals. Therefore, the correlation between age and ever_married is not a significant finding and does not provide any new insights or information about the data set.
+3. Most important finding is that out of all the features, the age variable has the highest correlation coefficient with the stroke.
+4. Additionally, the avg_glucose_level, heart_disease and the hypertension features have the second highest correlation coefficient with the target variable.
+5. Marriage also has a positive correlation with the stroke variable.(Well, now we know that marriage == stroke!)
+
+
+
+# Outliers detection and removal
+```{r, warning=FALSE}
+# Now, lets check the individual distributions of the continuous variables
+
+#Age
+
+# check the boxplot distributions of the age
+plot_ly(stroke, y = ~age, type = "box")
+paste0("Well, the boxplot works on the Interquartile range and it showed that there are no outliers in the age column.")
+
+
+# Even though the boxplot showed there are no outliers in the age column, lets also perform the z-score standardisation to double check about the outliers
+age.scale <- scale(stroke$age)
+age.out <- apply(age.scale, 1, function(x) any(x>3))
+sum(age.out)
+paste0("Even using the z-score standardization method has proved that there are no outliers in the age column.")
+
+
+## Average glucose level
+
+# Check the boxplot distributions of the avg_glucose_level
+plot_ly(stroke, y = ~avg_glucose_level, type = "box")
+paste0("we observed that there are some outliers present in the avg_glucose_level column.")
+
+# Perform the z-score standardisation and find the outliers
+avg.scale <- scale(stroke$avg_glucose_level) #scale the data
+avg.out <- apply(avg.scale, 1, function(x) any(x>3)) # find outliers
+sum(avg.out) # total number of outliers present in the column
+
+head(stroke[avg.out, 8], 10) # heads first 10 values of the outlier data points found in the column.
+
+## BMI - Body Mass Index
+
+# Check the boxplot distributions of the BMI
+plot_ly(stroke, y = ~bmi, type = "box")
+paste0("we observed that there are some outliers present in the bmi column.")
+
+# Perform the z-score standardisation and find the outliers
+bmi.scale <- scale(stroke$bmi) #scale the data
+bmi.out <- apply(bmi.scale, 1, function(x) any(x>3)) # find outliers
+sum(bmi.out) # total number of outliers present in the column
+
+head(stroke[bmi.out, 9], 10) # heads first 10 values of the outlier data points found in the column.
+
+
+## Conclusions
+sum(avg.out, bmi.out)
+# Out of the three continuous variables, the outliers were found only in the avg_glucose_level and bmi columns with a total of 108 observations.
+
+# Assemble the outliers together to remove them
+outliers <- which(avg.out | bmi.out)
+stroke.no.out <- stroke[-outliers,]
+```
+
+
+# Feature transformation
+```{r}
+## Check the distributions of the continuous variables after the removal of the outliers
+summary(stroke.no.out$avg_glucose_level)
+
+# Histogram of the avg_glucose_level after the outliers are removed
+hist(stroke.no.out$avg_glucose_level, probability = T)
+abline(v= mean(stroke.no.out$avg_glucose_level), col = "blue", lwd =3)
+lines(density(stroke.no.out$avg_glucose_level), col = "red", lwd = 3)
+
+# Perform square root transformation on the avg_glucose_level column 
+sqrt.glucose_level <- sqrt(stroke.no.out$avg_glucose_level)
+
+# check the summary of the transformed values
+summary(sqrt.glucose_level)
+
+# visualize the distribution of the transformed avg_glucose_level values
+hist(sqrt.glucose_level, probability = T)
+abline(v= mean(sqrt.glucose_level), col = "blue", lwd =3)
+lines(density(sqrt.glucose_level), col = "red", lwd = 3)
+
+paste0("The intial histogram of the avg_glucose_level column has a bimodal normal distribution but the scale is a bit big so i have performed the data transformation using the square root method because there is a positive correlation between the feature and the target variable and after the transformation, the bimodal normal distribution is more clear and the values are more clear. Therefore, I will proceed with the square root transformation of the glucose level values for the rest of the project.")
+
+# Data transformation using sqrt method
+stroke.no.out$avg_glucose_level <- sqrt(stroke.no.out$avg_glucose_level)
+
+# Now, lets check the summary and histogram of the BMI column
+summary(stroke.no.out$bmi)
+hist(stroke.no.out$bmi, probability = T)
+abline(v= mean(stroke.no.out$bmi), col = "blue", lwd =3)
+lines(density(stroke.no.out$bmi), col = "red", lwd = 3)
+paste0("From the above histogram, the BMI has a normal distribution hence no transformation is necessary.")
+```
+
+
+# Dummy Coding
+```{r}
+# Transform categorical variables into quantitative ones
+stroke.no.out$gender <- ifelse(stroke.no.out$gender == "Female", 1, 0)
+stroke.no.out$ever_married <- ifelse(stroke.no.out$ever_married == "Yes", 1, 0)
+stroke.no.out$Residence_type <- ifelse(stroke.no.out$Residence_type == "Urban", 1, 0)
+
+# Create dummy variables for a categorical variables to convert them into binary
+stroke_dummy <- dummy_columns(stroke.no.out, select_columns = c("work_type", "smoking_status"), remove_first_dummy = TRUE, remove_selected_columns = TRUE)
+
+#check the structure of the new stroke data
+str(stroke_dummy)
+
+# Rename these columns so that R wont get confused while predicting some models
+names(stroke_dummy)[names(stroke_dummy) == "work_type_Self-employed"] <- "work_type_self_employed"
+names(stroke_dummy)[names(stroke_dummy) == "smoking_status_never smoked"] <- "smoking_status_never_smoked"
+
+# Factorize the binary variables
+stroke_dummy$gender <- as.factor(stroke_dummy$gender)
+stroke_dummy$ever_married <- as.factor(stroke_dummy$ever_married)
+stroke_dummy$Residence_type <- as.factor(stroke_dummy$Residence_type)
+stroke_dummy$work_type_Govt_job <- as.factor(stroke_dummy$work_type_Govt_job)
+stroke_dummy$work_type_Never_worked <- as.factor(stroke_dummy$work_type_Never_worked)
+stroke_dummy$work_type_Private <- as.factor(stroke_dummy$work_type_Private)
+stroke_dummy$work_type_self_employed <- as.factor(stroke_dummy$work_type_self_employed)
+stroke_dummy$smoking_status_never_smoked <- as.factor(stroke_dummy$smoking_status_never_smoked)
+stroke_dummy$smoking_status_smokes <- as.factor(stroke_dummy$smoking_status_smokes)
+
+# check first few data of the new stroke data
+head(stroke_dummy)
+
+
+# Also, check the summary of the stroke dummy data
+summary(stroke_dummy)
+```
+From the summary, we can see that for certain features, the distribution is imbalanced with the majority class being 0 and minority class being 1. 
+
+
+
+
+
+
+
+
+
+## Modeling & Evaluation 
+
+# Model Training
+```{r}
+# Data split into 70-30
+set.seed(123) # set seed for reproducibility
+
+# create an index vector for the split using randomization
+split_index <- sample(1:nrow(stroke_dummy), size = round(0.7*nrow(stroke_dummy)), replace = F)
+
+# create training and validation datasets using the index
+train <- stroke_dummy[split_index, ]
+valid <- stroke_dummy[-split_index, ]
+
+# Check the dimensions of the train and validation datasets
+dim(train)
+dim(valid)
+
+# Check the structure of the train and validation datasets
+str(train)
+str(valid)
+
+# Check the summary of the train and validation datasets
+summary(train)
+summary(valid)
+
+# Check the number of rows for train data
+nrow(train)
+
+# check the target variable distribution in the train data
+table(train$stroke)
+
+# check the number of rows for validation data
+nrow(valid)
+
+# check the target variable distribution in the validation data
+table(valid$stroke)
+```
+From the table outputs, we can see that the majority class is 0 and minority class is 1 for the target feature values in both the train and validation dataset. This calls for an imbalanced classification. However, lets classify some models and check the results.
+
+
+## Model Construction - Imbalanced dataset
+
+#Model 1 : Logistic regression
+```{r}
+# Logistic Regression
+# We are first creating a model with logistic regression because it is well suited for binary classification tasks.
+set.seed(123)
+model.reg.imb <- glm(stroke ~.,family=binomial(link='logit'), data=train)
+summary(model.reg.imb)
+
+# Make predictions on validation data
+pred.reg.imb <- predict(model.reg.imb, newdata = valid[,-9], type = "response")
+
+# Convert the predicted values into binary for better outcome understanding
+pred.bin.imb <- ifelse(pred.reg.imb > 0.5, 1, 0)
+
+# Create a confusionmatrix to check the prediction result
+cm.reg.imb <- confusionMatrix(as.factor(pred.bin.imb), valid$stroke, positive = "1")
+dimnames(cm.reg.imb$table) <- list(Prediction = c("Non-stroke", "Stroke"), Actual = c("Non-stroke", "Stroke"))
+cm.reg.imb
+
+precision.reg <- (0 / (0 + 0))
+recall.reg <- 0 / (0 + 76 )
+
+F1_score.reg <- 2 * (precision.reg * recall.reg) / (precision.reg + recall.reg)
+F1_score.reg
+```
+According to the confusion matrix, the model only predicted the true negatives (1424) and even misclassified the true positives (76) as false negatives. Overall, model is not suitable for predicting the stroke cases.
+Also, the F1 score is Nan which typically means that there are no true positives in the prediction. I am not considering accuracy here because the model is trained with the majority class being 0 so it is calculating accuracy according to the majority class 0. 
+
+According to the summary, the age and avg_glucose_level have a significant positive coefficient.
+
+
+
+
+
+# Model 2: Decision Tree
+```{r}
+# Build the decision tree model
+set.seed(123)
+model.tree.imb <- C5.0(stroke ~ ., data = train) # I have used the C5.0 algorithm because it is better in handling imbalanced datasets
+model.tree.imb
+
+# Check the summary of the model's outcome
+summary(model.tree.imb)
+
+# Predict the validation data
+pred.tree.imb <- predict(model.tree.imb, newdata = valid[,-9], type = "class")
+
+# Create a confusionmatrix
+cm.tree.imb <- confusionMatrix(pred.tree.imb, valid$stroke, positive = "1")
+dimnames(cm.tree.imb$table) <- list(Prediction = c("Non-stroke", "Stroke"), Actual = c("Non-stroke", "Stroke"))
+cm.tree.imb
+
+# Calculate the F1 scores
+precision.tree <- (0 / (0 + 0))
+recall.tree <- 0 / (0 + 76 )
+
+F1_score.tree <- 2 * (precision.tree * recall.tree) / (precision.tree + recall.tree)
+F1_score.tree
+
+```
+According to the confusion matrix, the model only predicted the true negatives and even misclassified the true positives as false negatives. Overall, model is not suitable for predicting the stroke in an individual.
+Also, the F1 score is Nan which typically means that there are no true positives in the prediction. I am not considering accuracy here because the model is trained with the majority class being 0 so it is calculating accuracy according to the majority class 0. 
+
+
+# Model 3: Random Forest
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+
+# Fit random forest model
+model.rf.imb <- randomForest(stroke ~ ., data = train, importance = TRUE, proximity = TRUE)
+
+# Print model summary
+print(model.rf.imb)
+
+# Make predictions on the test data
+pred.forest.imb <- predict(model.rf.imb, newdata = valid[,-9])
+
+# Create a confusion matrix
+cm.rf.imb <- confusionMatrix(pred.forest.imb, valid$stroke, positive = "1")
+dimnames(cm.rf.imb$table) <- list(Prediction = c("Non-stroke", "Stroke"), Actual = c("Non-stroke", "Stroke"))
+cm.rf.imb
+
+# Calculate the F1 scores
+precision.rf <- (0 / (0 + 1))
+recall.rf <- 0 / (0 + 76 )
+
+F1_score.rf <- 2 * (precision.rf * recall.rf) / (precision.rf + recall.rf)
+F1_score.rf
+
+```
+According to the confusion matrix, the model predicted 1423 true negatives and even misclassified the true positives as false negatives but also it predicted 1 non-stroke case as a stroke case. Overall, model is not suitable for predicting the stroke in an individual. I am not considering accuracy here because the model is trained with the majority class being 0 so it is calculating accuracy according to the majority class 0. 
+Also, the F1 score is Nan which typically means that there are no true positives in the prediction.
+
+
+# Model 4: Artificial Neural Networks
+```{r}
+# Train the model using the nnet package
+set.seed(123)
+model.ann.imb <- nnet(stroke~., data = train, size = 13, decay = 0.1, maxit = 100) 
+
+# Make predictions on the test data
+pred.ann.imb <- predict(model.ann.imb, newdata = valid[,-9], type = "class")
+
+# create a confusion matrix
+cm.ann.imb <- confusionMatrix(as.factor(pred.ann.imb), valid$stroke, positive = "1")
+dimnames(cm.ann.imb$table) <- list(Prediction = c("Non-stroke", "Stroke"), Actual = c("Non-stroke", "Stroke"))
+cm.ann.imb
+
+# Calculate the f1 scores
+precision.ann <- (2 / (2 + 3))
+recall.ann <- 2 / (2 + 74 )
+
+F1_score.ann <- 2 * (precision.ann * recall.ann) / (precision.ann + recall.ann)
+F1_score.ann
+
+```
+According to the confusion matrix, the model predicts 2 stroke cases properly and misclassifies 74 stroke cases as non-stroke cases. On the other hand, it properly predicts the 1421 non-stroke cases and misclassifies 3 non-stroke cases as stroke cases. This model is comparatively better than the previous three models because it at least predicts 2 cases of getting stroke correctly. Additionally, The kappa value is 0.04 which indicates a poor agreement between the actual and the predicted values. The F1 score is 0.04 which is a low score means the precision and recall of the model are both low. It indicates that the model is not performing well in predicting the positive class. In other words, the model is not correctly identifying the minority class in the imbalanced dataset.
+
+In conclusion, out of the 4 models, only the ANN model performed somewhat better in predicting the true positive class. The major issue here is that the dataset is imbalanced with majority of values in the true negative class and minority of values in the true positive class. Due to this, when the model is being trained, it is considering the majority class and even it is predicting the minority class values into the majority class because of the extremely high number of values in the majority class. This is the reason why we got Nan values for the F1 score of those 3 models. Hence, to solve this problem, we'll peform SMOTE to balance the imbalanced data and train the model using balanced data to properly predict the test dataset.
+
+
+
+
+#SMOTE (Synthetic Minority Over-sampling Technique) - To Handle imbalanced data
+```{r}
+set.seed(123)
+train.smote <- SMOTE(train$stroke~., train, perc.over = 200, perc.under = 100) ## perc.over is a parameter for the oversampling of minority cases and perc.under is a parameter for the undersampling of majority cases
+
+#summary of the train.smote data
+summary(train.smote)
+paste0("Check the distribution of the factored features!")
+
+# Compare your results with the intial train data
+summary(train)
+paste0("The results are having a drastic change for factored features in comparison to the continuous features.")
+
+# after smote, this is the distribution of the target variable values
+table(train.smote$stroke)
+paste0("Now, this looks like a balanced data that I can work with.")
+```
+
+
+
+
+
+
+## Model Construction - After SMOTE
+
+#Model 1 : Logistic regression
+```{r}
+# Logistic Regression
+# We are first creating a model with logistic regression because it is well suited for binary classification tasks.
+set.seed(123)
+model.reg <- glm(stroke ~.,family=binomial(link='logit'), data=train.smote)
+
+# check the summary of the regression model
+summary(model.reg)
+```
+From the above summary, I have observed the following:
+
+1.The intercept term has a large negative coefficient value (-7.686820), which indicates that in the absence of any other factors, the model predicts a low probability of stroke.
+
+2. Age is a significant predictor of stroke with a positive coefficient value (0.090231) and a very small p-value (< 0.001).
+
+3. Heart disease is also a significant predictor with a large positive coefficient value (1.350544) and a very small p-value (< 0.001).
+
+4. Ever married and residence type are significant predictors with positive coefficient values (0.902761 and 0.559811 respectively) and small p-values (< 0.01).
+
+5. BMI has a slightly positive coefficient value (0.034238) and a p-value just above the significance level (0.058304).
+
+6. Work type, smoking status, and gender are not significant predictors, as their p-values are above the significance level (0.05).
+
+7. The model's goodness-of-fit is decent, as indicated by the residual deviance being much smaller than the null deviance.
+
+8. The model's AIC is relatively low (713.07), indicating that it is a good fit for the data.
+
+Overall, this logistic regression model provides insights into the predictors that have the greatest impact on the likelihood of a stroke occurring.
+
+
+# model prediction & evaluation
+```{r}
+# Make predictions on validation data
+pred.reg <- predict(model.reg, newdata = valid[,-9], type = "response")
+
+# Convert the predicted values into binary for better outcome understanding
+pred.bin <- ifelse(pred.reg > 0.5, 1, 0)
+
+# Create a confusionmatrix to check the prediction result
+confusionMatrix(as.factor(pred.bin), valid$stroke, positive = "1")
+
+```
+From the confusion matrix output, I have observed the following:
+
+1. The model has predicted 60 stroke cases correctly out of 76 and misclassified 11 stroke cases as non-stroke cases. However, it also misclassified 471 non-stroke cases as stroke cases which is again a big deal. Apart from this, it correctly classified 953 non-stroke cases. 
+
+2. The accuracy of the model is 0.6753, which means the model is correctly predicting 67.53% of the cases.
+
+3. The sensitivity of the model is 0.78947, which means the model correctly identifies 78.95% of the positive cases.
+
+4. The specificity of the model is 0.66924, which means the model correctly identifies 66.92% of the negative cases.
+
+5. The positive predictive value (PPV) of the model is 0.11299, which means that only 11.3% of the cases predicted as positive are actually positive.
+
+6. The negative predictive value (NPV) of the model is 0.98349, which means that 98.3% of the cases predicted as negative are actually negative.
+
+7. The Kappa statistic measures the agreement between the predicted and actual labels, and its value is 0.1197, which indicates poor agreement.
+
+
+# Model 2: Decision Tree
+```{r}
+# Build the decision tree model
+set.seed(123)
+model.tree <- C5.0(stroke ~ ., data = train.smote)
+model.tree
+
+# Check the summary of the model's outcome
+summary(model.tree)
+```
+From the above summary, I have observed the following:
+
+1. The decision tree model has a size of 24 nodes and an error rate of 11.9% on the training data.
+
+2. The attribute "age" is used 100% of the time in the tree, making it the most important predictor for stroke.
+The attribute "heart_disease" is used 73.99% of the time, followed by "work_type_Govt_job" at 45.64%, indicating their importance in predicting stroke.
+
+3. The attribute "bmi" is only used 14.36% of the time, suggesting that it may not be as important as other predictors in this model.
+
+
+
+#model prediction & evaluation
+```{r}
+# Predict the validation data
+pred.tree <- predict(model.tree, newdata = valid[,-9], type = "class")
+
+# Create a confusionmatrix
+confusionMatrix(pred.tree, valid$stroke, positive = "1")
+```
+From the above confusion matrix, I have observed the following:
+
+1. The model has correctly classified 58 true positives but it misclassified 18 stroke cases as non-stroke cases. However, it also predicted 422 non-stroke cases as stroke cases and correctly predicted 1002 non stroke cases.
+
+2. The overall accuracy of the model is 0.7067 or 70.67%, which means that the model correctly classified 70.67% of the instances.
+
+3. The sensitivity of the model is 0.76316, which means that the model correctly classified 76.32% of the positive instances.
+
+4. The specificity of the model is 0.70365, which means that the model correctly classified 70.37% of the negative instances.
+
+5. The positive predictive value (PPV) of the model is 0.12083, which means that out of all the instances that the model classified as positive (1), only 12.08% of them were actually positive (1).
+
+6. The negative predictive value (NPV) of the model is 0.98235, which means that out of all the instances that the model classified as negative (0), 98.24% of them were actually negative (0).
+
+7. The Kappa statistic measures the agreement between the predicted and actual class labels, and its value is 0.1328 for this model. A Kappa value of 1 indicates perfect agreement, while this value is low.
+
+
+
+
+# Model 3: Random Forest
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+
+# Fit random forest model
+model.rf <- randomForest(stroke ~ ., data = train.smote, importance = TRUE, proximity = TRUE)
+
+# Print model summary
+print(model.rf)
+```
+From the above summary output, I have observed the following:
+
+1. The number of trees grown in the forest is 500, which can provide high accuracy in the predictions.
+
+2. At each split in the tree, only 3 variables were tried, which can make the model run faster.
+
+3. The out-of-bag (OOB) estimate of the error rate is 15.95%, which is a measure of how well the model will perform on new, unseen data.
+
+4. The confusion matrix shows the number of true positives (225), true negatives (460), false positives (101), and false negatives (29).
+
+5. The class error for predicting 0 is 30.98% and for predicting 1 it is 5.93%, which means the model is better at predicting 1 than 0.
+
+
+
+
+# model prediction & evaluation
+```{r}
+# Make predictions on the test data
+pred.forest <- predict(model.rf, newdata = valid[,-9])
+
+# Create a confusion matrix
+confusionMatrix(pred.forest, valid$stroke, positive = "1")
+
+```
+From the above confusion matrix, I have observed the following:
+
+1. The model correctly classified 59 stroke cases and incorrectly classified 17 stroke cases as non-stroke cases. Additionally, it correctly classified 963 non-stroke cases and incorrectly classified 461 non-stroke cases as stroke cases.
+
+2. The overall accuracy of the model is 0.6813 or 68.13%.
+
+3. The sensitivity of the model is 0.77632 or 77.63%, which means that the model correctly identified 77.63% of all positive cases.
+
+4. The specificity of the model is 0.67626 or 67.63%, which means that the model correctly identified 67.63% of all negative cases.
+
+5. The positive predictive value (PPV) of the model is 0.11346 or 11.35%, which means that when the model predicts a positive case, it is correct only 11.35% of the time.
+
+6. The negative predictive value (NPV) of the model is 0.98265 or 98.27%, which means that when the model predicts a negative case, it is correct 98.27% of the time.
+
+7. The Kappa statistic is 0.1202 or 12.02%, which indicates slight agreement between the predicted and actual values beyond chance.
+
+
+
+
+# Model 4: Artificial Neural Networks
+```{r}
+# Train the model using the nnet package
+set.seed(123)
+model.ann <- nnet(stroke~., data = train.smote, size = 2, decay = 0.1, maxit = 100) # since size = 1 is the default value, I have taken the next value.
+
+# Make predictions on the test data
+pred.ann <- predict(model.ann, newdata = valid[,-9], type = "class")
+
+# create a confusion matrix
+confusionMatrix(as.factor(pred.ann), valid$stroke, positive = "1")
+
+```
+From the above confusion matrix, I have observed the following:
+
+1. The model has 64 true positives, 12 false negatives, 534 false positives and 890 true negatives.
+
+2. The overall accuracy of the model is 0.636, which means that 63.6% of cases were correctly classified. The sensitivity of the model, which is the proportion of true positives out of all actual positives, is 0.842, and the specificity, which is the proportion of true negatives out of all actual negatives, is 0.625.
+
+3. The Kappa statistic is 0.1099, which indicates a slight agreement between the model's predictions and the actual values.
+
+
+## Model Tuning - To improve the model's performance
+
+```{r}
+# Logistic Regression
+
+# Stepwise backward elimination
+step(model.reg, direction = "backward")
+
+
+# New model after elimination of non-significant variables
+set.seed(123)
+model.reg.1 <- glm(stroke ~ age + heart_disease + ever_married + Residence_type + 
+    bmi + work_type_Private + smoking_status_smokes, family = binomial(link = "logit"), 
+    data = train.smote)
+
+# summarize the model
+summary(model.reg.1)
+
+# check whether the initial model without backward elimination is better or not
+anova(model.reg.1, model.reg, test = "Chisq")
+
+# Evaluation of the new regression model after backward stepwise elimination
+pred.reg.1 <- predict(model.reg.1, newdata = valid[,-9], type = "response")
+
+# Convert the predicted values into binary for better outcome understanding
+pred.bin.1 <- ifelse(pred.reg.1 > 0.5, 1, 0)
+
+# Create a confusionmatrix to check the prediction result
+confusionMatrix(as.factor(pred.bin.1), valid$stroke, positive = "1")
+
+```
+From the summary output of the new regression model, I have observed the following:
+
+1. The model has an intercept of -7.73, which is the estimated log-odds of stroke occurrence when all predictor variables are zero.
+
+2. Age is a significant predictor of stroke occurrence, with an estimated coefficient of 0.094 and a very small p-value (< 0.001). This suggests that the odds of stroke increase by a factor of exp(0.094) = 1.099 for each one-year increase in age, holding other variables constant.
+
+3. Heart disease is also a significant predictor of stroke occurrence, with an estimated coefficient of 1.369 and a very small p-value (< 0.001). This suggests that individuals with heart disease have exp(1.369) = 3.930 times higher odds of stroke occurrence than those without heart disease, holding other variables constant.
+
+4. Ever married and residence type are also significant predictors of stroke occurrence, with positive coefficients indicating that being married and living in an urban area are associated with higher odds of stroke occurrence.
+
+5. BMI, work type (private), and smoking status (smokes) are not statistically significant predictors of stroke occurrence, based on their p-values (> 0.05).
+
+6. The residual deviance is 685.92 on 807 degrees of freedom, which indicates that the model fits the data reasonably well. The AIC value of 701.92 suggests that this model is a good fit for the data, as it has a low AIC value.
+
+
+Comparison of the regression model's before and after the stepwise backward elimination:
+In this case, Model 2 has a slightly lower residual deviance than Model 1, but the change in deviance is not significant based on the p-value (0.8981). This suggests that the additional predictor variables in Model 2 do not significantly improve the model fit compared to Model 1. Therefore, the model which has been created using the backward elimination elimination has a better model fit.
+
+However, according to the confusion matrix results of the new regression model: 
+
+1. The model has 61 true positives, 946 true negatives, 478 false positives, 15 false negatives. 
+
+2. Compared to the model's performance without the backward step elimination, there is a slight improvement. 
+
+3. The accuracy of the model is 0.6713, which means that the model correctly predicted the outcome for 67.13% of the test set.
+
+4. The kappa statistic is 0.1202, indicating slight agreement between the predicted and true classes.
+
+5. The sensitivity of the model is 0.80263, which means that the model correctly predicted the positive class for 80.26% of the test set.
+
+6. The specificity of the model is 0.66433, which means that the model correctly predicted the negative class for 66.43% of the test set
+
+
+In conclusion, the ANN model is better suited for predicting the stroke cases in comparison to other three models because it correctly predicted 64 stroke cases out of the 76. The second model which is a better suited is the logistic regression with backward elimination step performed because it correctly predicted 61 stroke cases out of the 76. The remaining models random forest and decision tree performance could be improved by hyperparameter tuning and we can check the outputs again.
+
+
+
+
+
+
+## Evaluation with K-fold cross validation
+```{r}
+
+# Logistic regression
+set.seed(123)
+reg.fit <- train(stroke~age + heart_disease + ever_married + Residence_type + 
+    bmi + work_type_Private + smoking_status_smokes, data = train.smote, method = "glmnet", trControl = trainControl(method = "cv", number = 5), family = "binomial")
+
+reg.fit
+
+
+# Evaluation of the new regression model after backward stepwise elimination
+pred.reg.fit <- predict(reg.fit, newdata = valid[,-9], type = "raw")
+
+# Create a confusionmatrix to check the prediction result
+confusionMatrix(pred.reg.fit, valid$stroke, positive = "1")
+
+```
+From the summary above, I have observed the following:
+
+1. The output shows the results of a cross-validated glmnet model with 5 folds, which was used to classify two classes ('0' and '1') based on 7 predictor variables. The model was trained on 815 samples without any pre-processing.
+
+2. The accuracy and kappa coefficient (a measure of agreement between predicted and actual classes) for each combination of alpha (the elastic net mixing parameter) and lambda (the regularization parameter). The optimal model was selected based on the highest accuracy, which was achieved with an alpha of 0.1 and a lambda of 0.005955545.
+
+Overall, the model achieved relatively high accuracy (around 81%) and moderate agreement (kappa coefficients around 0.6) for the optimal model. 
+
+From the confusion matrix, I have observed the following:
+
+1.The overall accuracy of the model is 0.664, which means that 66.4% of the predictions were correct. The kappa value of 0.1162 indicates only slight agreement between the model's predictions and the actual classes. The sensitivity of the model, which measures the proportion of actual positive cases that were correctly identified as positive, is 0.80263. The specificity, which measures the proportion of actual negative cases that were correctly identified as negative, is 0.65660.
+
+2. The model has 61 true positives, 935 true negatives, 489 false positives, 15 false negatives.
+
+
+
+```{r}
+# C5.0 Decision trees
+set.seed(123)
+tree.fit <- train(stroke ~., data = train.smote, tuneGrid = expand.grid( .winnow = c(TRUE,FALSE), .trials= 1:6, .model="tree"), trControl = trainControl(method = "cv", number = 5), method = "C5.0", metric = "Kappa", verbose = F)
+
+tree.fit
+
+# Predict the validation data
+pred.tree.fit <- predict(tree.fit, newdata = valid[,-9], type = "raw")
+
+# Create a confusionmatrix
+confusionMatrix(pred.tree.fit, valid$stroke, positive = "1")
+```
+From the summary above, I have observed that: 
+
+This output shows the results of a cross-validated C5.0 model on a dataset with 815 samples and 14 predictors. The goal is to classify the samples into two classes, '0' and '1'.
+
+The model was trained with different values of the tuning parameters 'winnow' and 'trials', and the performance was evaluated using accuracy and kappa as metrics. The 'winnow' parameter determines whether to use the winnow algorithm for attribute weighting, and the 'trials' parameter specifies the number of boosting trials to perform.
+
+The best performing model had 'trials' set to 6, 'model' set to 'tree', and 'winnow' set to FALSE. It achieved an accuracy of 82.95% and a kappa of 0.6349. 
+
+
+From the confusion matrix, I have observed that:
+1. The model has 60 true positives, 970 true negatives, 454 false positives, 16 false negatives.
+
+2. The accuracy of the model is 0.6867, which means that it correctly classified 68.67% of the instances.
+
+3. The kappa statistic is 0.1263, indicating fair agreement between the observed and predicted classifications.
+
+4. The sensitivity of the model is 0.78947, which means that it correctly identified 78.95% of the positive instances. The specificity of the model is 0.68118, which means that it correctly identified 68.12% of the negative instances.
+
+
+```{r}
+# Random forest
+set.seed(123)
+rf.fit <- train(stroke ~., data = train.smote, method = "rf", trControl = trainControl(method = "cv", number = 5, search = "grid"), metric= "Kappa", tuneGrid = expand.grid( mtry = c(1:10)), importance = T)
+
+rf.fit
+
+# Make predictions on the test data
+pred.rf.fit <- predict(rf.fit, newdata = valid[,-9])
+
+# Create a confusion matrix
+confusionMatrix(pred.rf.fit, valid$stroke, positive = "1")
+```
+From the summary, I have observed that:
+
+The resampling method used was cross-validation with 5 folds, and the summary of sample sizes shows that each fold had a similar number of samples. 
+
+The tuning parameter used was "mtry", which determines the number of variables randomly sampled as candidates at each split. The model was evaluated for mtry values ranging from 1 to 10.
+
+The optimal Random Forest model was selected based on the highest Kappa value, which is a measure of agreement between predicted and actual class labels, and the model with mtry = 8 was chosen.
+
+The accuracy of the Random Forest model for the optimal mtry value was 0.8491, and the Kappa value was 0.6772, which indicates a substantial agreement between predicted and actual class labels.
+
+Overall, the Random Forest model with mtry = 8 seems to have performed better than the previous models we have looked at, based on its higher accuracy and Kappa values.
+
+
+
+From the confusion matrix, I have observed that:
+
+1. The accuracy of the model is 0.7147 which indicates that it correctly classified 71.47% of the instances. 
+
+2.The Kappa coefficient is 0.1412 which indicates a fair agreement.
+
+3. The sensitivity of the model is 0.77632 which indicates the proportion of actual positive instances that were correctly identified by the model. The specificity is 0.71138 which indicates the proportion of actual negative instances that were correctly identified by the model.
+
+4. The model has 1013 true negatives, 17 false negatives, 411 false positives, 59 true positives.
+
+
+```{r}
+# Artificial Neural Networks
+set.seed(123)
+ann.fit <- train(stroke ~ ., data = train.smote, method = "nnet", trControl = trainControl(method = "cv", number = 5), tunelength = 5, metric = "Kappa")
+
+ann.fit
+
+
+# To determine which neurons in the hidden layer performed best
+ann.fit$results[order(-ann.fit$results$Kappa), ] # 3 neurons model has better Kappa statistic compared to other neurons which indicates a good agreement between the actual and the predicted values. 
+
+# Make predictions on the test data
+pred.ann.fit <- predict(ann.fit, newdata = valid[,-9], type = "raw")
+
+# create a confusion matrix
+confusionMatrix(pred.ann.fit, valid$stroke, positive = "1")
+
+
+```
+
+From the summary, I have observed that:
+
+In the neural network model, 5-fold cross-validation was performed using 14 predictor variables to predict a binary outcome with 815 samples. The model was tuned with different values of size and decay. The selected values for the final model were size=3 and decay=0.1, which resulted in an accuracy of 0.816 and a Kappa value of 0.601.
+
+From the confusion matrix, I have observed that:
+
+1. The accuracy of the model is 0.662 which indicates that it correctly classified 66.2% of the instances. 
+
+2.The Kappa coefficient is 0.1095 which indicates a slight agreement.
+
+3. The sensitivity of the model is 0.77632 which indicates the proportion of actual positive instances that were correctly identified by the model. The specificity is 0.65590 which indicates the proportion of actual negative instances that were correctly identified by the model.
+
+4. The model has 934 true negatives, 17 false negatives, 490 false positives, 59 true positives.
+
+
+In conclusion, I have used the Kappa metric in the train model because Kappa metric is better for imbalanced data and if we train the model on the kappa metric then it will be helpful when evaluating the test data which is imbalanced. Additionally, After hyperparamter tuning, I have observed that the Logistic regression model is better suited for the stroke prediction in comparison to the other models after hyperparameter tuning. The second model which is better suited for the stroke prediction would be Decision Tree. 
+
+On overall comparsion of the models before and after hyper parameter tuning, the decision tree model has showed a good improvement after hyperparameter tuning. However, other models like the ANN, random forest and logistic regression didn't show much improvement in terms of predicting the stroke cases better, on the other hand, the ANN model's true positive values prediction fell after the hyper parameter tuning indicating the previous model was better at its capacity.
+
+
+## Model Tuning with ensemble
+```{r}
+# Bagging method 
+set.seed(123)
+
+# Create model using the bagging method
+model.bag <- bagging(stroke ~ . , data = train.smote, nbagg = 25 )
+
+predict.bag <- predict(model.bag, valid[,-9])
+
+confusionMatrix(predict.bag, valid$stroke, positive = "1")
+```
+
+From the confusion matrix, I have observed that:
+
+1. The accuracy of the model is 71.6%, which means that 71.6% of the predictions made by the model were correct.
+
+2. The sensitivity of the model for class 1 is 71.05%, which means that 71.05% of the actual class 1 observations were correctly identified as class 1 by the model. The specificity of the model for class 0 is 71.63%, which means that 71.63% of the actual class 0 observations were correctly identified as class 0 by the model.
+
+3. The kappa statistic is 0.1263, which indicates that the agreement between the predicted and actual values is only slightly better than chance.
+
+4. The model has 54 true positives, 22 false negatives, 1020 true negatives, 404 false positives. 
+
+Overall, the model has a low PPV for class 1, indicating that it may be better at identifying class 0 observations than class 1 observations
+
+
+```{r}
+# Performing the bagging method with cross validation
+
+set.seed(123)
+
+# create model
+model.bag1 <- train(stroke ~ ., data = train.smote, method = "treebag", metric = "Kappa", trControl = trainControl(method = "cv", number = 9))
+
+#predict the values
+predict.bag1 <- predict(model.bag1, valid[,-9])
+
+# create a confusion matrix
+confusionMatrix(predict.bag1, valid$stroke, positive = "1")
+
+```
+
+From the confusion matrix, I have observed that:
+
+After performing 9 k-fold cross validation, the model's prediction for true positives slightly improved. So, it is something we can experiment with.
+
+The accuracy of the model is 71.87%, which means that 71.87% of the predictions made by the model were correct.
+
+The sensitivity of the model for class 1 is 73.68%, which means that 73.68% of the actual class 1 observations were correctly identified as class 1 by the model. The specificity of the model for class 0 is 71.77%, which means that 71.77% of the actual class 0 observations were correctly identified as class 0 by the model.
+
+The kappa statistic is 0.1345, which indicates that the agreement between the predicted and actual values is only slightly better than chance.
+
+The model has predicted 56 true positives, 20 false negatives, 1022 true negatives, 402 false positives.
+
+# Ensemble Model
+```{r}
+# create an ensemble function - An ensemble model generally means taking predictions of different models and combining them in some fashion to get one set of predictions.
+
+Ensemble.model <- function(testdata){
+  
+  # Use the four models to predict the stroke class for the test data
+  pred.tree <- predict(model.tree, newdata = valid[,-9], type = "class")
+  pred.reg <- predict(model.reg, newdata = valid[,-9])
+  pred.forest <- predict(model.rf, newdata = valid[,-9])
+  pred.ann <- predict(model.ann, newdata = valid[,-9], type = "class")
+  
+  # Combine the predictions into a single data frame
+  predictions <- data.frame(pred.tree, pred.reg, pred.forest, pred.ann)
+  
+  # Calculate the mode for each row (i.e. the most common class)
+  ensemble_pred <- apply(predictions, 1, function(x) {
+    names(sort(table(x), decreasing = TRUE))[1]
+  })
+  
+  return(ensemble_pred)
+}
+```
+
+
+```{r}
+# prediction of the ensemble model
+ensemble.pred <- Ensemble.model(valid[,-9])
+
+confusionMatrix(as.factor(ensemble.pred), valid$stroke, positive = "1")
+```
+
+From the confusion matrix, I have observed that:
+
+The accuracy of the model is 67.6%, which means that 67.6% of the predictions made by the model were correct.
+
+The sensitivity of the model for class 1 is 81.58%, which means that 81.58% of the actual class 1 observations were correctly identified as class 1 by the model. The specificity of the model for class 0 is 66.85%, which means that 66.85% of the actual class 0 observations were correctly identified as class 0 by the model.
+
+The PPV for class 1 is 11.61%, which means that only 11.61% of the predicted class 1 observations were actually class 1. The NPV for class 0 is 98.55%, which means that 98.55% of the predicted class 0 observations were actually class 0.
+
+The kappa statistic is 0.1257, which indicates that the agreement between the predicted and actual values is only slightly better than chance.
+
+The model has predicted 62 true positives, 14 false negatives, 952 true negatives, 472 false positives.
+
+```{r}
+# Comparison of Ensemble model's performance vs Individual models
+
+## Ensemble model
+accuracy.en = 0.674 * 100
+accuracy.en
+precision.en <- 62 / (62 + 475)
+precision.en
+recall.en <- 62/ (62+14)
+recall.en
+F1_score.en <- 2 * (precision.en * recall.en) / (precision.en + recall.en)
+F1_score.en
+
+# Individual Models
+
+# Logistic Regression
+accuracy.reg1 <- 0.6713 * 100
+accuracy.reg1
+precision.reg1 <- 61/ (61+478)
+precision.reg1
+recall.reg1 <- 61/(61+15)
+recall.reg1
+F1.score.reg1 <- 2 * (precision.reg1 * recall.reg1) / (precision.reg1 + recall.reg1)
+F1.score.reg1
+
+# Decision Tree
+accuracy.tree1 <- 0.7067 * 100
+accuracy.tree1
+precision.tree1 <- 58/(58+422)
+precision.tree1
+recall.tree1 <- 58/(58+18)
+recall.tree1
+F1.score.tree1 <-  2 * (precision.tree1 * recall.tree1) / (precision.tree1 + recall.tree1)
+F1.score.tree1
+
+#Random forest
+accuracy.rf1 <- 0.6813 * 100
+accuracy.rf1
+precision.rf1 <- 59/(59+461)
+precision.rf1
+recall.rf1 <- 59/(59+17)
+recall.rf1
+F1.score.rf1 <-  2 * (precision.rf1 * recall.rf1) / (precision.rf1 + recall.rf1)
+F1.score.rf1
+
+# Artificial Neural Network
+accuracy.ann1 <- 0.636 * 100
+accuracy.ann1
+precision.ann1 <- 64/(64+534)
+precision.ann1
+recall.ann1 <- 64/(64+12)
+recall.ann1
+F1.score.ann1 <-  2 * (precision.ann1 * recall.ann1) / (precision.ann1 + recall.ann1)
+F1.score.ann1
+```
+To give a better display of the statistics, I will provide a manual table here:
+
+
+
+                           Accuracy        Precision         Recall        F1 score
+
+
+Ensemble                     67.4           0.1154562      0.8157895      0.2022838
+
+
+Logistic regression          67.13         0.1131725       0.8026316      0.198374
+
+
+Decision Tree                70.67        0.1208333       0.7631579       0.2086331
+
+
+Random Forest                68.13.       0.1134615       0.7763158       0.1979866
+
+ 
+Artificial Neural Net        63.6         0.1070234       0.8421053       0.189911
+
+
+
+According to the above table, 
+
+1. Decision Tree has the highest accuracy, precision and F1 score. 
+
+2. ANN has the highest recall score indicating that it has the highest ability to correctly identify positive cases.
+
+3. The Ensemble and logistic regression models also has a good recall score.
+
+4. The Random Forest model performs relatively well across all metrics but does not achieve the highest score in any of them.
+
+5. The Logistic Regression model performs comparably to the Ensemble model in terms of accuracy, precision, and F1 score.
+
+Overall, the ANN model is better suited for predicting the stroke cases in comparison to the other models. This is followed by ensemble model and logistic regression model.
+
+## Deployement
+To perform this phase, we have the ANN model ready to perform on real-world healthcare datasets. However, on this stroke prediction dataset, the ANN model was successful in predicting 64 stroke cases out of 76.
+
+
+## References
+Huang, C., Zhang, Y., Hu, Y., &amp; Yang, J. (n.d.). Visual analysis and prediction of stroke - stat.cmu.edu. Visual Analysis and Prediction of Stroke. Retrieved April 27, 2023, from https://www.stat.cmu.edu/capstoneresearch/spring2021/315files/team16.html 
+
+Yeap, Z. C. (2020, December 9). Exploratory Data Analysis on Stroke Dataset. Medium. Retrieved April 26, 2023, from https://towardsdatascience.com/step-by-step-exploratory-data-analysis-on-stroke-dataset-840aefea8739 
+
+Arnaldo, M. (2021, April 23). Smote and best subset selection for linear regression in R. Analytics Vidhya. Retrieved April 26, 2023, from https://www.analyticsvidhya.com/blog/2021/04/smote-and-best-subset-selection-for-linear-regression-in-r/ 
+
+Alberg, J. (2015, June 21). R, caret, and parameter tuning c5.0. Euclidean Technologies ®. Retrieved April 26, 2023, from https://www.euclidean.com/machine-learning-in-practice/2015/6/12/r-caret-and-parameter-tuning-c50 
+
+
